@@ -3,6 +3,7 @@ import sys
 
 from lexer import lex
 from symbols import SymbolTable
+from parser import SimpleParser
 
 def format_value(v: str) -> str:
     # mostra valor em uma linha, com escapes visiveis
@@ -23,21 +24,57 @@ def main():
 
     st = SymbolTable()
     try:
-        for tok in lex(code):
-            if not args.show_comments and tok.type in ("COMMENT_LINE", "COMMENT_BLOCK"):
-                continue
-            # Adiciona identificadores a tabela de simbolos
-            if tok.type == "ID":
+        tokens = list(lex(code))
+
+        bad_tokens = [t for t in tokens if t.type in ("BAD_NUM_ID", "INVALID_CHAR")]
+        normal_tokens = [t for t in tokens if t.type not in ("BAD_NUM_ID", "INVALID_CHAR")]
+
+        for e in bad_tokens:
+            if e.type == "BAD_NUM_ID":
+                print(f"Erro lexico: identificador invalido {e.value!r} em {e.line}:{e.col}", file=sys.stderr)
+            else:
+                print(f"Erro lexico: caractere invalido {e.value!r} em {e.line}:{e.col}", file=sys.stderr)
+
+        # popula a symbol table via parser
+        parser = SimpleParser(normal_tokens, st)
+        parser.process()
+
+        #garantir que todos os ids apareçam na tabela
+        for tok in normal_tokens:
+            if tok.type == "ID" and st.get(tok.value) is None:
                 st.add(tok.value, line=tok.line)
-            print(f"{tok.line}:{tok.col}\t{tok.type}\t{format_value(tok.value)}")
+
+        #mapa nome -> indice(ordem correta)
+        name_to_index = {s.name: s.index for s in st.items()}
+
+        #imprimir
+        print("lista de tokens:")
+        for tok in normal_tokens:
+            if not args.show_comments and tok.type in ("COMMENT_LINE", "COMMENT_BLOCK", "WHITESPACE", "PP_DIRECTIVE"):
+                continue
+            if tok.type == "KEYWORD":
+                print(tok.value)
+            elif tok.type == "ID":
+                idx = name_to_index.get(tok.value, 0)
+                print(f"id,{idx}")
+            elif tok.type in ("INT", "HEX_INT", "OCT_INT", "FLOAT"):
+                print(f"number,{tok.value}")
+            elif tok.type == "STRING":
+                print(f'string,{format_value(tok.value)}')
+            elif tok.type == "CHAR":
+                print(f"char,{format_value(tok.value)}")
+            else:
+                #imprime operador/pontuação
+                print(tok.value)
+
     except Exception as e:
         print(f"Erro lexico: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Resumo da tabela de simbolos
-    print("\nTabela de simbolos (quantiade = {}):".format(len(st)))
+    #imprime a tabela de simbolos
+    print("\ntabela de simbolos:")
     for s in st.items():
-        print(f"{s.index:3d} {s.name:20s} occ={s.occurrences:3d} first_line={s.first_decl_line}")
+        print(f"#{s.index}: {s.name}")
 
 if __name__ == "__main__":
     main()
