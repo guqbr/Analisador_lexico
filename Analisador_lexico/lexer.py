@@ -6,7 +6,7 @@ TOKEN_SPEC = [
     ("COMMENT_BLOCK", r"/\*[\s\S]*?\*/"),
     ("COMMENT_LINE", r"//.*"),
     ("STRING", r'"([^"\\]|\\.)*"'),
-    ("CHAR", r"'(\\.|[^\\'])'"),
+    ("CHAR", r"'([^'\\]|\\.|\\\n)*'"),
     ("BAD_NUM_ID", r'[0-9]+[A-Za-z_][A-Za-z0-9_]*'),
     ("HEX_INT", r'0[xX][0-9A-Fa-f]+'),
     ("OCT_INT", r'0[0-7]+'),
@@ -34,6 +34,21 @@ def _update_pos(line: int, col: int, text: str):
         col = len(text) - last_nl
     return line, col
 
+def _unescaped_length(s: str) -> int:
+    i = 0
+    count = 0
+    while i < len(s):
+        if s[i] == '\\':
+            i += 1
+            if i < len(s):
+                # trata escape (considera-se como 1 char)
+                i += 1
+            count += 1
+        else:
+            i += 1
+            count += 1
+    return count
+
 def lex(code: str):
     line = 1
     col = 1
@@ -57,6 +72,21 @@ def lex(code: str):
                 yield Token("MISMATCH", value, line, col)
             line, col = _update_pos(line, col, value)
             continue
+
+        # validar CHAR: se o conteúdo não representa exatamente 1 caractere, produzir BAD_CHAR
+        if kind == "CHAR":
+            inner = value[1:-1]  # conteúdo entre aspas simples
+            effective_len = _unescaped_length(inner)
+            if effective_len != 1:
+                # emitir token de erro (será coletado pelo main e reportado), não aborta
+                yield Token("BAD_CHAR", value, line, col)
+                line, col = _update_pos(line, col, value)
+                continue
+            else:
+                # é char válido
+                yield Token("CHAR", value, line, col)
+                line, col = _update_pos(line, col, value)
+                continue
 
         if kind == "ID" and value in KEYWORDS:
             kind = "KEYWORD"
