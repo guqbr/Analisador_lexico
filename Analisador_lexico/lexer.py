@@ -2,26 +2,29 @@ import re
 from tokens import Token
 
 TOKEN_SPEC = [
-    ("PP_DIRECTIVE", r'\#[^\n]*'),
+    ("PP_DIRECTIVE",  r'\#[^\n]*'),
     ("COMMENT_BLOCK", r"/\*[\s\S]*?\*/"),
-    ("COMMENT_LINE", r"//.*"),
-    ("STRING", r'"([^"\\]|\\.)*"'),
-    ("CHAR", r"'([^'\\]|\\.|\\\n)*'"),
-    ("BAD_NUM_ID", r'[0-9]+[A-Za-z_][A-Za-z0-9_]*'),
-    ("HEX_INT", r'0[xX][0-9A-Fa-f]+'),
-    ("OCT_INT", r'0[0-7]+'),
-    ("FLOAT", r'((?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)'),
-    ("INT", r'[0-9]+'),
-    ("ID", r'[A-Za-z_][A-Za-z0-9_]*'),
-    ("OP", r'==|!=|<=|>=|->|\+\+|--|&&|\|\||<<=|>>=|<<|>>|[-+*/%<>=&|^~!:;,.(){}\[\]?]'),
-    ("WHITESPACE", r'\s+'),
-    ("MISMATCH", r'.'),
+    ("COMMENT_LINE",  r"//.*"),
+    ("STRING",        r'"([^"\\]|\\.)*"'),
+    ("CHAR",          r"'(\\.|[^\\'])'"),
+    ("HEX_INT",       r'0[xX][0-9A-Fa-f]+'),
+    ("OCT_INT",       r'0[0-7]+'),
+    ("FLOAT",         r'((?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)'),
+    ("INT",           r'[0-9]+'),
+    ("BAD_NUM_ID",    r'[0-9]+[A-Za-z_][A-Za-z0-9_]*'),
+    ("ID",            r'[A-Za-z_][A-Za-z0-9_]*'),
+    ("OP",            r'==|!=|<=|>=|->|\+\+|--|&&|\|\||<<=|>>=|<<|>>|[-+*/%<>=&|^~!:;,.(){}\[\]?]'),
+    ("WHITESPACE",    r'\s+'),
+    ("MISMATCH",      r'.'),
 ]
 
 master_pat = re.compile("|".join(f"(?P<{n}>{p})" for n, p in TOKEN_SPEC))
 
 KEYWORDS = {
-    "if", "else", "for", "while", "int", "float", "char", "struct", "typedef", "const", "void", "unsigned", "long", "short", "double", "switch", "case", "break", "continue", "default", "goto", "enum", "sizeof", "volatile", "register", "extern", "auto", "inline", "_Bool", "_Complex", "_Imaginary", "return"
+    "auto","break","case","char","const","continue","default","do","double","else","enum",
+    "extern","float","for","goto","if","inline","int","long","register","restrict","return",
+    "short","signed","sizeof","static","struct","switch","typedef","union","unsigned","void",
+    "volatile","while","_Bool","_Complex","_Imaginary"
 }
 
 def _update_pos(line: int, col: int, text: str):
@@ -59,17 +62,26 @@ def lex(code: str):
             line, col = _update_pos(line, col, value)
             continue
 
-        # BAD_NUM_ID: produz token de erro e também emite INT + ID para continuar o parsing
+        # BAD_NUM_ID: tente reconhecer casos hex/oct/float que foram erroneamente casados
         if kind == "BAD_NUM_ID":
-            yield Token("BAD_NUM_ID", value, line, col)
-            m = re.match(r'([0-9]+)([A-Za-z_][A-Za-z0-9_]*)\Z', value)
-            if m:
-                num_part, id_part = m.group(1), m.group(2)
-                yield Token("INT", num_part, line, col)
-                id_col = col + len(num_part)
-                yield Token("ID", id_part, line, id_col)
+            # se for hex/octal/float, transforme no token correto (protege contra ordem)
+            if re.fullmatch(r'0[xX][0-9A-Fa-f]+', value):
+                yield Token("HEX_INT", value, line, col)
+            elif re.fullmatch(r'0[0-7]+', value):
+                yield Token("OCT_INT", value, line, col)
+            elif re.fullmatch(r'((?:[0-9]+\.[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)', value):
+                yield Token("FLOAT", value, line, col)
             else:
-                yield Token("MISMATCH", value, line, col)
+                # comportamento atual: emitimos token de erro e tokens de recuperação (INT + RECOVERED_ID)
+                yield Token("BAD_NUM_ID", value, line, col)
+                m = re.match(r'([0-9]+)([A-Za-z_][A-Za-z0-9_]*)\Z', value)
+                if m:
+                    num_part, id_part = m.group(1), m.group(2)
+                    yield Token("INT", num_part, line, col)
+                    id_col = col + len(num_part)
+                    yield Token("RECOVERED_ID", id_part, line, id_col)
+                else:
+                    yield Token("MISMATCH", value, line, col)
             line, col = _update_pos(line, col, value)
             continue
 
@@ -90,8 +102,6 @@ def lex(code: str):
 
         if kind == "ID" and value in KEYWORDS:
             kind = "KEYWORD"
-
-        # em vez de abortar, produza token INVALID_CHAR e continue
         if kind == "MISMATCH":
             yield Token("INVALID_CHAR", value, line, col)
             line, col = _update_pos(line, col, value)
